@@ -1,0 +1,39 @@
+# Environment & Secrets
+.env
+.env.local
+
+# Python virtual environment
+.venv/
+venv/
+ENV/
+
+# Python cache & compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Testing cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor & IDE settings
+.vscode/
+.idea/
+
+# Local data lake (không commit dữ liệu thô hàng GB lên Git)
+raw/
+
+# AI Agent skills & cache
+.agents/
+
+# Bỏ qua tài liệu học tập cá nhân và các file json trong docs/
+docs/*
+!docs/diagrams/
+docs/diagrams/*
+!docs/diagrams/*.html
+
+# OS temporary files
+.DS_Store
+Thumbs.db
+*.tmp
