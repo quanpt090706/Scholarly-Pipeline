@@ -37,6 +37,7 @@ def fetch_page(
     cursor: str,
     per_page: int,
     mailto: str,
+    api_key: str = None,
     max_retries: int = 5,
 ) -> dict[str, Any]:
     """GET /works 1 page, retry exponential backoff với 429/5xx. Raise sau max_retries."""
@@ -45,7 +46,12 @@ def fetch_page(
         "per_page": per_page,
         "cursor": cursor,
         "mailto": mailto,
+        "api_key": api_key
     }
+
+    if api_key:
+        params["api_key"] = api_key
+        
     last_exc: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
@@ -116,7 +122,7 @@ def harvest_works(
                 break
             data = fetch_page(
                 client, config.base_url, config.filter_str, cursor, config.per_page, config.mailto,
-                config.max_retries,
+                config.api_key, config.max_retries
             )
             results = data.get("results", [])
             for raw in results:

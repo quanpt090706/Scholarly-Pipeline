@@ -1,279 +1,222 @@
-# scholarly-pipeline
+# Scholarly Pipeline
 
-Pipeline thu thập, xử lý và phục vụ dữ liệu bài báo khoa học từ OpenAlex.
+An end-to-end Data Engineering pipeline designed to harvest, validate, process, model, and serve academic research literature from the OpenAlex API.
 
-Được xây dựng theo từng giai đoạn để học Data Engineering theo project thực tế — mỗi giai đoạn gắn với một nhóm kỹ năng cụ thể.
+## Project Status
 
----
+**Status: In Progress (Active Development)**
 
-## Kiến trúc tổng quan
-
-```
-OpenAlex API
-     │
-     ▼
-┌─────────────────┐
-│  1. Ingestion   │  Fetch metadata + PDF → raw storage (MinIO/S3)
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  2. Processing  │  Trích xuất text PDF, chuẩn hóa, tách metadata
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  3. Modeling    │  raw → staging → mart (PostgreSQL + dbt)
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ 4. Data Quality │  Validation, completeness check, báo cáo
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ 5. Orchestration│  Airflow/Dagster DAG, incremental, scheduling
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ 6. Monitoring   │  Structured logs → Prometheus → Grafana
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  7. Serving     │  Full-text / semantic search, dashboard thống kê
-└─────────────────┘
-```
+Current focus: Completing Stage 01 (Ingestion & Stream Validation) and transitioning to Stage 02 (Processing & Extraction).
 
 ---
 
-## Các giai đoạn
+## Architecture Overview
 
-### Giai đoạn 1 — Ingestion
-**File:** [`01_ingestion.md`](./01_ingestion.md)
+```mermaid
+flowchart TD
+    subgraph Source["External Source"]
+        OA["OpenAlex REST API\n(Works, Authors, Venues)"]
+    end
 
-Thu thập metadata và PDF từ OpenAlex API, lưu vào raw storage.
+    subgraph Stage1["Stage 01: Ingestion"]
+        HV["Metadata Harvester\n(Cursor Pagination & Checkpointing)"]
+        DL["PDF Downloader\n(Stream Download & Magic Byte Check)"]
+        RAW[("Raw Data Store\n(JSON Batches & PDF Files)")]
+    end
 
-| Kỹ năng học | Công nghệ |
-|---|---|
-| REST API, cursor pagination | `httpx`, `requests` |
-| Checkpoint / resume | JSON state file |
-| Retry với exponential backoff | Custom hoặc `tenacity` |
-| Stream download, file validation | `httpx`, magic bytes |
-| Idempotency | File-based dedup |
-| Object storage | MinIO (local), S3/GCS (cloud) |
+    subgraph Stage2["Stage 02: Processing"]
+        EXT["Text & Abstract Extraction\n(pdfplumber / PyMuPDF)"]
+        SCHEMA["Schema Normalization\n(Pydantic Models)"]
+    end
 
----
+    subgraph Stage3["Stage 03: Data Modeling"]
+        PG[("PostgreSQL\n(Raw -> Staging -> Marts)")]
+        DBT["dbt Core\n(Star Schema & Transformations)"]
+    end
 
-### Giai đoạn 2 — Processing
-**File:** `02_processing.md` *(chưa viết)*
+    subgraph Stage4["Stage 04 - 06: Platform Operations"]
+        DQ["Data Quality Testing\n(dbt test / Great Expectations)"]
+        ORCH["Orchestration\n(Airflow / Dagster)"]
+        MON["Monitoring & Metrics\n(Structured Logs & Prometheus)"]
+    end
 
-Xử lý dữ liệu thô: trích xuất text từ PDF, reconstruct abstract từ inverted index, chuẩn hóa trường metadata, phát hiện và ghi nhận lỗi.
+    subgraph Stage5["Stage 07: Serving Layer"]
+        SEARCH["Search & Retrieval\n(PostgreSQL FTS / Vector Search)"]
+        VIZ["Analytics & Dashboards\n(Metabase / Streamlit)"]
+    end
 
-| Kỹ năng học | Công nghệ |
-|---|---|
-| PDF text extraction | `pdfplumber`, `pymupdf` |
-| OCR cho PDF scan | `tesseract`, `pytesseract` |
-| Text normalization | `underthesea` (nếu có tiếng Việt) |
-| Schema chuẩn hóa | Pydantic |
-| Xử lý lỗi và partial failure | Logging, dead-letter queue |
-
-**Tình huống cần xử lý:**
-- PDF chỉ chứa ảnh scan (không có text layer)
-- Abstract bị thiếu hoặc encoding sai
-- Tác giả không có ORCID, institution không có ROR
-
----
-
-### Giai đoạn 3 — Data Modeling
-**File:** `03_modeling.md` *(chưa viết)*
-
-Thiết kế schema database, load dữ liệu đã xử lý vào PostgreSQL theo mô hình raw → staging → mart, dùng dbt để transform.
-
-| Kỹ năng học | Công nghệ |
-|---|---|
-| Normalization (1NF, 2NF, 3NF) | PostgreSQL |
-| Quan hệ nhiều-nhiều (bài báo ↔ tác giả) | Foreign key, junction table |
-| Star schema / mart layer | dbt |
-| Index, EXPLAIN, query optimization | PostgreSQL |
-| Schema evolution (thêm cột, đổi kiểu) | dbt migrations |
-| SCD Type 2 (lịch sử thay đổi) | dbt snapshots |
-
-**Tình huống cần tạo:**
-- Query 10K+ bài không có index → thêm index → so sánh tốc độ
-- Một tạp chí đổi tên → xem lịch sử được lưu thế nào
-- Thêm một trường mới vào giữa pipeline đang chạy
-
----
-
-### Giai đoạn 4 — Data Quality
-**File:** `04_data_quality.md` *(chưa viết)*
-
-Định nghĩa và kiểm tra các quy tắc chất lượng dữ liệu: độ đầy đủ, tính duy nhất, tính hợp lệ. Sinh báo cáo chất lượng tự động.
-
-| Kỹ năng học | Công nghệ |
-|---|---|
-| Các chiều chất lượng dữ liệu | Lý thuyết |
-| Test trên model | dbt tests (built-in + custom) |
-| Expectation-based testing | Great Expectations |
-| Báo cáo chất lượng | dbt docs, GE Data Docs |
-
-**Các check quan trọng:**
-- DOI không được trùng lặp
-- `publication_year` phải trong khoảng hợp lý
-- Mỗi bài phải có ít nhất 1 tác giả
-- `cited_by_count` không được âm
-
-**Tình huống cần tạo:**
-- Cố tình inject bản ghi trùng DOI → xem check có bắt không
-- Bài có `publication_year: 1800` → xem range check có hoạt động không
-
----
-
-### Giai đoạn 5 — Orchestration
-**File:** `05_orchestration.md` *(chưa viết)*
-
-Đưa toàn bộ pipeline vào DAG, chạy incremental theo lịch (chỉ fetch bài mới), xử lý retry và dependency giữa các task.
-
-| Kỹ năng học | Công nghệ |
-|---|---|
-| DAG, task dependency | Airflow hoặc Dagster |
-| Incremental load | `from_updated_date` filter của OpenAlex |
-| Backfill | Airflow backfill command |
-| Retry policy per task | Airflow / Dagster config |
-| Sensor (chờ điều kiện) | Airflow Sensor |
-
-**Tình huống cần tạo:**
-- Kill một task giữa DAG → xem downstream task xử lý thế nào
-- Backfill 3 tháng dữ liệu cũ
-- Task dbt test fail → downstream serving task không chạy
-
----
-
-### Giai đoạn 6 — Monitoring
-**File:** `06_monitoring.md` *(chưa viết)*
-
-Thêm structured logging và metrics vào pipeline. Dựng dashboard quan sát tình trạng hệ thống và chất lượng dữ liệu.
-
-| Kỹ năng học | Công nghệ |
-|---|---|
-| Structured logging | `structlog` hoặc `loguru` |
-| Metrics (counter, gauge, histogram) | Prometheus |
-| Alerting | Alertmanager hoặc Grafana alert |
-| Dashboard | Grafana |
-
-**Metrics quan trọng:**
-- Số bài fetch được mỗi lần chạy
-- Tỉ lệ lỗi download PDF
-- Thời gian chạy mỗi giai đoạn
-- Số bản ghi fail data quality check
-
-**Tình huống cần tạo:**
-- Cấu hình alert khi tỉ lệ lỗi > 5%
-- Xem Grafana dashboard trong khi pipeline đang chạy
-
----
-
-### Giai đoạn 7 — Serving
-**File:** `07_serving.md` *(chưa viết)*
-
-Xây dựng lớp phục vụ dữ liệu: full-text search, semantic search (tùy chọn), dashboard thống kê.
-
-| Kỹ năng học | Công nghệ |
-|---|---|
-| Full-text search | PostgreSQL FTS hoặc Elasticsearch |
-| Semantic search (vector) | pgvector, Qdrant, Milvus |
-| Embedding | SentenceTransformers hoặc OpenAlex topic |
-| Dashboard | Metabase, Superset hoặc Streamlit |
-
-**Câu hỏi bài toán mẫu cho dashboard:**
-- Số bài báo theo năm, lĩnh vực, quốc gia
-- Top institution theo số bài và cited_by_count
-- Tỉ lệ open access theo lĩnh vực
-- Trend citation theo topic
-
----
-
-### Giai đoạn 8 — Packaging & Cloud Deploy
-**File:** `08_deploy.md` *(chưa viết)*
-
-Đóng gói toàn hệ thống, deploy lên cloud, CI/CD.
-
-| Kỹ năng học | Công nghệ |
-|---|---|
-| Containerization | Docker, Docker Compose |
-| CI pipeline | GitHub Actions |
-| Cloud storage | AWS S3 hoặc GCS |
-| Cloud database | AWS RDS hoặc Cloud SQL |
-| IaC cơ bản | Terraform (tùy chọn) |
-
-**Mục tiêu:** Dựng lại toàn hệ thống từ đầu chỉ bằng `docker-compose up` hoặc một lệnh deploy duy nhất.
-
----
-
-## Thứ tự học đề xuất
-
-```
-1 → 2 → 3  (end-to-end bản đơn giản, ưu tiên chạy được trước)
-         ↓
-         4  (thêm data quality)
-         ↓
-         5  (orchestration)
-         ↓
-         6  (monitoring)
-         ↓
-    7 hoặc 8  (tùy mục tiêu: showcase hay production-ready)
+    OA -->|Cursor-based HTTP GET| HV
+    HV -->|Atomic Writes| RAW
+    HV -->|Open Access URLs| DL
+    DL -->|Stream Check & Deduplicate| RAW
+    RAW --> EXT
+    EXT --> SCHEMA
+    SCHEMA --> PG
+    PG --> DBT
+    DBT --> DQ
+    ORCH -.->|Schedule & Coordinate| HV
+    ORCH -.->|Trigger Pipeline Runs| DBT
+    DBT --> SEARCH
+    SEARCH --> VIZ
 ```
 
-Nguyên tắc: hoàn thiện từng giai đoạn ở mức đủ dùng, sau đó mới sang giai đoạn tiếp theo — không cố làm hoàn hảo từng phần trước khi có end-to-end chạy được.
+### Interactive Architecture Diagrams
+
+For detailed interactive diagrams with zoom, pan, theme switching, and component inspection, view the standalone HTML artifacts:
+
+- [System Overview Architecture](docs/diagrams/system-overview.html): Complete platform blueprint across all pipeline stages.
+- [Stage 01 Ingestion Architecture](docs/diagrams/01-ingestion.html): Detailed workflow of cursor pagination, atomic writes, checkpoint recovery, and idempotency.
 
 ---
 
-## Cấu trúc thư mục project
+## Roadmap & Implementation Progress
 
-```
+- [x] **Stage 01: Ingestion**
+  - [x] REST client with cursor pagination and rate limit handling.
+  - [x] Atomic JSON checkpoint state management for crash recovery.
+  - [x] Local raw storage layer with deduplication and idempotency guarantees.
+  - [x] Scheduled batch harvesting via automated jobs (cron / CLI).
+  - [x] Stream-based PDF downloader with magic byte validation (`%PDF`).
+  - [x] Automated unit test suite verifying idempotency and state safety.
+- [ ] **Stage 02: Processing**
+  - [ ] PDF text layer extraction and OCR fallback handling.
+  - [ ] Abstract reconstruction from OpenAlex inverted index structures.
+  - [ ] Pydantic schema validation, sanitization, and dead-letter queue routing.
+- [ ] **Stage 03: Data Modeling**
+  - [ ] Relational schema design (1NF to 3NF) for papers, authors, institutions, and concepts.
+  - [ ] Multi-layer warehouse layout: `raw` -> `staging` -> `marts`.
+  - [ ] dbt transformation models, surrogate key generation, and dimensional modeling.
+- [ ] **Stage 04: Data Quality**
+  - [ ] Schema enforcement, uniqueness constraints, and referential integrity tests.
+  - [ ] Automated quality reports and boundary validations.
+- [ ] **Stage 05: Orchestration**
+  - [ ] Directed Acyclic Graph (DAG) construction with dependency resolution.
+  - [ ] Incremental harvesting pipelines with automated backfill mechanisms.
+- [ ] **Stage 06: Monitoring & Observability**
+  - [ ] Structured logging across all pipeline components.
+  - [ ] Pipeline throughput, failure rates, and latency metric dashboards.
+- [ ] **Stage 07: Serving Layer**
+  - [ ] Full-text search index and citation network exploration.
+  - [ ] Interactive analytics dashboard for research trends.
+- [ ] **Stage 08: Packaging & Deployment**
+  - [ ] Multi-container deployment using Docker Compose.
+  - [ ] Continuous Integration (CI) test automation via GitHub Actions.
+
+---
+
+## Tech Stack
+
+| Domain | Technology | Purpose |
+|---|---|---|
+| Ingestion | Python 3.10+, `httpx`, `python-dotenv` | HTTP client, cursor pagination, stream validation |
+| Processing | `pydantic`, `pdfplumber`, `pymupdf` | Schema enforcement, PDF parsing, text extraction |
+| Storage & Warehouse | PostgreSQL 16 | Relational store, dimensional warehouse layers |
+| Transformation | dbt Core (`dbt-postgres`) | Data modeling, lineage, staging and mart builds |
+| Testing | `pytest`, `pytest-mock` | Unit, integration, and idempotency testing |
+| Orchestration | Apache Airflow / Dagster | Workflow scheduling, task dependencies, retries |
+| Observability | Python `logging`, Prometheus, Grafana | Structured event logs and performance monitoring |
+| Infrastructure | Docker, Docker Compose | Reproducible local and containerized deployment |
+
+---
+
+## Repository Structure
+
+```text
 scholarly-pipeline/
-├── ingestion/
-├── processing/
-├── modeling/
-│   └── dbt/
-├── quality/
-├── orchestration/
-│   └── dags/
-├── monitoring/
-│   ├── prometheus/
-│   └── grafana/
-├── serving/
-├── storage/
-├── tests/
-├── docs/                    # các file .md này
-│   ├── README.md
-│   ├── 01_ingestion.md
-│   └── ...
-├── docker-compose.yml
-├── .env.example
-└── README.md
+|-- ingestion/              # Ingestion engine (harvester, PDF downloader, config)
+|   |-- config.py           # Configuration loader and environment bindings
+|   |-- harvester.py        # Cursor-based metadata harvesting runner
+|   |-- pdf_downloader.py   # Stream download and magic byte validation
+|-- storage/                # Storage layer interfaces and implementations
+|   |-- storage.py          # LocalRawStore with atomic writes and deduplication
+|-- tests/                  # Unit and integration test suites
+|   |-- test_idempotency.py # Verification of idempotent writes and state recovery
+|-- docs/                   # Documentation and architecture diagrams
+|   |-- diagrams/           # Interactive standalone HTML architecture models
+|       |-- system-overview.html
+|       |-- 01-ingestion.html
+|-- .env.example            # Template for environment variables and secrets
+|-- requirements.txt        # Python dependency definitions
+|-- README.md               # Project documentation and specifications
 ```
 
 ---
 
-## Stack tóm tắt
+## Getting Started
 
-| Tầng | Công nghệ |
-|---|---|
-| Nguồn dữ liệu | OpenAlex API |
-| Raw storage | MinIO (local) / S3 (cloud) |
-| Database / Warehouse | PostgreSQL |
-| Transform | dbt |
-| Data quality | dbt tests + Great Expectations |
-| Orchestration | Airflow hoặc Dagster |
-| Monitoring | Prometheus + Grafana |
-| Serving | PostgreSQL FTS + Metabase/Streamlit |
-| Packaging | Docker Compose |
-| CI | GitHub Actions |
+### Prerequisites
+
+- Linux or macOS environment (Windows supported via WSL2)
+- Python 3.10 or higher
+- Git
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/quanpt090706/Scholarly-Pipeline.git
+cd Scholarly-Pipeline
+```
+
+### 2. Create and Activate Virtual Environment
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+### 3. Install Dependencies
+
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### 4. Configure Environment Variables
+
+Copy the example environment configuration and supply your details:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` to specify your contact email (recommended by OpenAlex for polite pool access) and your API key:
+
+```ini
+OPENALEX_EMAIL="your_email@example.com"
+OPENALEX_API_KEY="your_openalex_api_key"
+RAW_STORAGE_PATH="raw"
+STATE_FILE_PATH="raw/state.json"
+```
+
+### 5. Run the Ingestion Harvester
+
+Execute a harvest run to fetch metadata batches from OpenAlex:
+
+```bash
+python3 -m ingestion.harvester --per-page 200 --max-records 600
+```
+
+Harvested raw data and cursor checkpoints will be written atomically to the `raw/` directory:
+
+```text
+raw/
+|-- works/
+|   |-- 2026-10-22/
+|       |-- batch_000001.json
+|       |-- batch_000002.json
+|-- state.json
+```
+
+### 6. Run the Test Suite
+
+Run pytest to ensure idempotency and storage tests pass:
+
+```bash
+PYTHONPATH=. pytest tests/ -v
+```
 
 ---
 
-*Ghi chú: Metadata từ OpenAlex được cấp phép CC0 (public domain). Xem thêm: https://openalex.org*
+## Data Attribution & Ethics
+
+Metadata collected through this pipeline is sourced from [OpenAlex](https://openalex.org) under the [CC0 1.0 Public Domain Dedication](https://creativecommons.org/publicdomain/zero/1.0/). Open access PDFs are downloaded strictly in accordance with publisher licenses referenced within individual OpenAlex work records.

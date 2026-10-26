@@ -32,6 +32,10 @@ docs/*
 !docs/diagrams/
 docs/diagrams/*
 !docs/diagrams/*.html
+0*_*.md
+
+# Logs
+*.log
 
 # OS temporary files
 .DS_Store

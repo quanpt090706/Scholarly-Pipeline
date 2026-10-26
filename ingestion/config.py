@@ -11,11 +11,14 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from dotenv import load_dotenv
 
+load_dotenv()
 
 @dataclass
 class HarvestConfig:
     base_url: str = "https://api.openalex.org"
+    api_key: str = None
     mailto: str = "your@email.com"  # polite pool, xem 01_ingestion.md
     filter_str: str = "institutions.country_code:VN,is_oa:true,publication_year:>2017"
     per_page: int = 200
@@ -54,6 +57,7 @@ class HarvestConfig:
         max_pages_raw = os.getenv("MAX_PAGES", "")
         return cls(
             base_url=os.getenv("OPENALEX_BASE_URL", "https://api.openalex.org"),
+            api_key=os.getenv("OPENALEX_API_KEY", None),
             mailto=os.getenv("OPENALEX_MAILTO", "your@email.com"),
             filter_str=os.getenv(
                 "OPENALEX_FILTER",
